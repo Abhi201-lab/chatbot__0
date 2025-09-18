@@ -1,5 +1,11 @@
 # Chatbot RAG Microservices Platform
 
+> QuickStart: See `SETUP.md` for detailed step-by-step environment preparation. Below is an architecture & concepts overview; for a fast run:
+> 1. Copy each `*.env.example` to `.env` inside its service folder and fill placeholders.
+> 2. `docker compose up -d --build`
+> 3. Ingest a doc (`/ingest` or `/upload`) then POST to `/process`.
+
+
 ## 1. Overview
 A modular Retrieval‑Augmented Generation (RAG) system composed of independent FastAPI / Streamlit services. It ingests documents, embeds them into a Postgres + pgvector store, retrieves semantically relevant chunks, and synthesizes grounded answers with layered safety, intent gating, and tracing.
 
@@ -36,10 +42,9 @@ Core goals:
 | `llmapi_v1` | 8002 | Embedding, chat, synthesis and safety inspection wrapper |
 | `ingestapi_v1` | 8003 | Document upload & JSON ingest: chunking + embedding + persistence |
 | `postgres_v1` | 5432 (host 5543) | Postgres with pgvector extension |
-Note: Ports numbers can vary 
 
 ## 4. Data Flow (Full `/process` Pipeline)
-1. Request enters `chat_api_v1` (optionally adds session/user metadata)from UI.
+1. Request enters `chat_api_v1` (optionally adds session/user metadata).
 2. Forwarded to `kmapi_v1 /process`.
 3. Pre‑safety inspection (moderation) via `llmapi_v1/inspect`.
 4. Intent classification (in‑domain gating).
@@ -55,7 +60,7 @@ Note: Ports numbers can vary
 10. Grounding heuristic: token overlap + domain keyword presence.
 11. Trace events aggregated (if enabled) and returned.
 
-`/rag_simple` endpoint : embed → retrieve → answer 
+`/rag_simple` endpoint (minimal path): embed → retrieve → answer (skips safety, grounding, intent, rephrase) for quick debugging / education.
 
 ## 5. Retrieval & Embeddings
 - Embeddings: OpenAI `text-embedding-ada-002` (1536 dims) via `llmapi_v1`.
@@ -87,6 +92,28 @@ Original parameter binding produced `operator does not exist: vector <=> numeric
 | `SAFETY_DISABLE_BLOCK` | Allow unsafe but annotate | 0 / 1 |
 
 Legacy removed: `VECTOR_BACKEND`, `VECTOR_DB_PATH` (FAISS eliminated).
+
+### .env Example Templates
+Example files (`.env.example`) will be provided per service. Copy & rename to `.env` then edit values.
+Minimal examples:
+```
+# llmapi_v1/.env.example
+OPENAI_API_KEY=sk-your-key
+PORT=8002
+
+# kmapi_v1/.env.example
+LLM_API_URL=http://llmapi_v1:8002
+DATABASE_URL=postgresql+psycopg2://postgres:123@postgres_v1:5432/chatdb
+VECTOR_K=8
+RETRIEVAL_MIN_SCORE=0.15
+TRACE_DEFAULT=1
+NORMALIZE_EMBEDDINGS=1
+
+# ingestapi_v1/.env.example
+DATABASE_URL=postgresql+psycopg2://postgres:123@postgres_v1:5432/chatdb
+OPENAI_API_KEY=sk-your-key
+NORMALIZE_EMBEDDINGS=1
+```
 
 ## 9. Running Locally (Docker Compose)
 ```powershell
@@ -132,8 +159,7 @@ curl http://localhost:8083/vector_stats
 ```
 
 ## 11. Querying
-
-
+Minimal:
 ```powershell
 curl -X POST http://localhost:8081/rag_simple -H "Content-Type: application/json" -d '{"user_input":"how to pay bill","trace":true}'
 ```
@@ -155,7 +181,7 @@ Returned `trace` array events (timestamps relative to request start):
 - grounding
 - response_ready
 
-## 13. Normalization & Indexing (WIP)
+## 13. Normalization & Indexing
 Normalization script (if needed for legacy rows):
 ```powershell
 $env:DATABASE_URL="postgresql://postgres:123@localhost:5543/chatdb"
@@ -177,7 +203,7 @@ SET ivfflat.probes = 10;
 4. Adjust `RETRIEVAL_MIN_SCORE`, `VECTOR_K`, temporarily disable grounding.
 5. Add more domain documents (content coverage beats threshold tweaks).
 
-## 15. Safety & Grounding Tuning (WIP)
+## 15. Safety & Grounding Tuning
 | Goal | Change |
 |------|--------|
 | Reduce false blocks | Set `SAFETY_DISABLE_BLOCK=1` temporarily |
@@ -194,9 +220,13 @@ SET ivfflat.probes = 10;
 - Cached rephrase results with TTL to save tokens.
 - Structured citation formatting / highlighting in UI.
 
-## 17. Security / Operational Notes (FS)
+## 17. Security / Operational Notes
+- Keep API keys out of source control (use per-service `.env`).
+- Rate limit external LLM calls if exposing publicly.
+- Add request size limits on upload endpoints for large PDFs.
+- Enable SSL termination at ingress/proxy layer in production.
 
-## 18. Directory Structure 
+## 18. Directory Structure (Key Portions)
 ```
 chat_api_v1/          # Gateway
 kmapi_v1/             # Retrieval + orchestration
@@ -214,18 +244,5 @@ scripts/normalize_vectors.py
 4. Ingest sample documents.
 5. Hit `/debug_retrieve` to validate retrieval.
 6. Query `/process` with trace to confirm full pipeline.
-7. (Optional) Create IVF / HNSW index once corpus grows.
 
-## 20. Troubleshooting Table (FS)
-| Symptom | Action |
-|---------|--------|
-| 0 hits, rows > 0 | Check logs for operator error; ensure vector literal fix deployed | testing
-| Slow retrieval | Add IVF index, tune lists/probes |
-| Hallucinations | Raise `GROUNDING_MIN_OVERLAP`, enforce grounding |
-| Over-blocking | Enable `SAFETY_DISABLE_BLOCK`, review categories |
-| Low recall | Lower `RETRIEVAL_MIN_SCORE`, raise `VECTOR_K`, add docs |
 
-## 21. License / Usage
-Internal prototype.
-
----

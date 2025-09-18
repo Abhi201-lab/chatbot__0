@@ -1,20 +1,19 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from openai import OpenAI
 import json
 
 from environment import load_env, env
 from logger import get_logger
 from model import TextRequest, EmbedRequest, SynthRequest, ChatRequest
-
-# prompt loader import
 from prompts.prompt_loader import format_prompt, PromptNotFoundError
+from helpers import LLMClient, parse_json_object
 
 
 load_env()
 log = get_logger("llm_api")
 
-client = OpenAI(api_key=env("OPENAI_API_KEY"))
+client = LLMClient(api_key=env("OPENAI_API_KEY"))
+# Allow disabling of blocking for debugging / tuning
 SAFETY_DISABLE_BLOCK = env("SAFETY_DISABLE_BLOCK", default="0", required=False) in ("1","true","TRUE","yes","on")
 
 app = FastAPI(title="LLM API", version="1.0.0")
@@ -38,20 +37,23 @@ async def log_requests(request: Request, call_next):
 
 
 def _chat_once(system: str | None, user: str, temperature: float = 0.2) -> str:
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": user})
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        temperature=temperature,
-    )
-    return resp.choices[0].message.content
+    return client.chat(system, user, temperature=temperature)
 
 
 @app.post("/inspect")
 def inspect(req: TextRequest):
+    """Safety inspection with relaxed blocking policy.
+
+    Returns JSON: {
+        safe: bool            # semantic overall safety (True if allowed to continue)
+        categories: [str]     # categories detected
+        block: bool           # whether caller should block the request/answer
+        policy: str           # textual reason / applied rule
+    }
+    Blocking now occurs ONLY if a hard category is present (illicit instructions, self-harm, sexual exploitation)
+    OR more than 1 distinct category including at least one hard.
+    Mild categories (violence, hate) alone will NOT block but are surfaced.
+    """
     text = req.text or ""
     hard_categories = {"illicit instructions", "self-harm", "sexual exploitation"}
     mild_categories = {"violence", "hate"}
@@ -149,8 +151,8 @@ def inspect(req: TextRequest):
 @app.post("/embed")
 def embed(req: EmbedRequest):
     try:
-        emb = client.embeddings.create(model="text-embedding-ada-002", input=req.text)
-        return {"embedding": emb.data[0].embedding}
+        emb = client.embed(req.text)
+        return {"embedding": emb}
     except Exception:
         log.exception("Embedding error")
         return JSONResponse(status_code=502, content={"detail": "Embedding provider error"})
@@ -160,12 +162,8 @@ def embed(req: EmbedRequest):
 def synthesize(req: SynthRequest):
     prompt = f"{req.context}\n\nTask: {req.query}"
     try:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        return {"answer": resp.choices[0].message.content}
+        answer = client.chat(None, prompt, temperature=0.2)
+        return {"answer": answer}
     except Exception:
         log.exception("Synthesize failed")
         return JSONResponse(status_code=502, content={"detail": "Synthesize provider error"})
@@ -174,12 +172,8 @@ def synthesize(req: SynthRequest):
 @app.post("/chat")
 def chat(req: ChatRequest):
     try:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": req.prompt}],
-            temperature=0.2,
-        )
-        return {"answer": resp.choices[0].message.content}
+        answer = client.chat(None, req.prompt, temperature=0.2)
+        return {"answer": answer}
     except Exception:
         log.exception("Chat failed")
         return JSONResponse(status_code=502, content={"detail": "Chat provider error"})

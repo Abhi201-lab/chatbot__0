@@ -10,6 +10,7 @@ from models import ChatRequest, ChatResponse, FeedbackRequest
 import uuid
 from db import SessionLocal, init_db
 from orm import Conversation, Feedback
+from helpers import ensure_conversation, call_km
 
 
 load_env()
@@ -58,21 +59,16 @@ async def log_requests(request: Request, call_next):
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest, db: Session = Depends(get_db)):
     t0 = time.time()
-    # Auto-generate IDs if not provided
+    # Auto-generate IDs if omitted
     thread_id = req.thread_id or str(uuid.uuid4())
     message_id = req.message_id or str(uuid.uuid4())
     log.info(f"Chat request thread={thread_id} message={message_id}")
     try:
-        conv = Conversation(thread_id=thread_id, message_id=message_id, user_input=req.user_input)
-        db.merge(conv)
-        db.commit()
-
+        ensure_conversation(db, thread_id, message_id, req.user_input)
         km_elapsed = None
         try:
             km_t0 = time.time()
-            forward_payload = {"thread_id": thread_id, "message_id": message_id, "user_input": req.user_input}
-            r = requests.post(f"{KM_API}/process", json=forward_payload, timeout=60)
-            r.raise_for_status()
+            data = call_km(KM_API, thread_id, message_id, req.user_input)
             km_elapsed = time.time() - km_t0
         except requests.exceptions.ConnectionError:
             log.exception("Could not connect to KM service")
@@ -86,8 +82,6 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
         except Exception:
             log.exception("Unexpected error calling KM service")
             raise HTTPException(status_code=500, detail="Unexpected error contacting knowledge service.")
-
-        data = r.json()
         bot_output = data.get("bot_output", "")
         citations = data.get("citations", [])
 
@@ -117,7 +111,6 @@ def feedback(req: FeedbackRequest, db: Session = Depends(get_db)):
         req.thread_id, req.message_id, req.feedback_type, original_type, req.feedback_reasons, len(req.feedback_comment or "")
     )
     try:
-        # Basic validation
         if not req.thread_id or not req.message_id:
             raise HTTPException(status_code=400, detail="thread_id and message_id required")
         if req.feedback_type not in (None, 'positive', 'down'):
@@ -125,18 +118,31 @@ def feedback(req: FeedbackRequest, db: Session = Depends(get_db)):
 
         combined = req.combined_text()
         reasons_csv = ",".join(req.feedback_reasons) if req.feedback_reasons else None
-        fb = Feedback(thread_id=req.thread_id, message_id=req.message_id,
-                      feedback_type=req.feedback_type,
-                      feedback_text=combined,  # legacy compatibility
-                      feedback_reasons=reasons_csv,
-                      feedback_comment=req.feedback_comment)
+        fb = Feedback(
+            thread_id=req.thread_id,
+            message_id=req.message_id,
+            feedback_type=req.feedback_type,
+            feedback_text=combined,
+            feedback_reasons=reasons_csv,
+            feedback_comment=req.feedback_comment,
+        )
         db.add(fb)
         db.commit()
-        # Post-commit verification query
         count = db.query(Feedback).filter_by(thread_id=req.thread_id, message_id=req.message_id).count()
         saved = db.query(Feedback).filter_by(feedback_id=fb.feedback_id).first()
-        log.info("Feedback saved id=%s verify_count=%s reasons_csv=%s saved_type=%s", fb.feedback_id, count, reasons_csv, saved.feedback_type if saved else None)
-        return {"status": "ok", "feedback_id": fb.feedback_id, "verify_count": count, "saved_feedback_type": saved.feedback_type if saved else None}
+        log.info(
+            "Feedback saved id=%s verify_count=%s reasons_csv=%s saved_type=%s",
+            fb.feedback_id,
+            count,
+            reasons_csv,
+            saved.feedback_type if saved else None,
+        )
+        return {
+            "status": "ok",
+            "feedback_id": fb.feedback_id,
+            "verify_count": count,
+            "saved_feedback_type": saved.feedback_type if saved else None,
+        }
     except Exception:
         log.exception("Feedback insert failed")
         return JSONResponse(status_code=500, content={"detail": "Feedback save failed"})

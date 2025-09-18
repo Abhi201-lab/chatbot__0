@@ -12,7 +12,7 @@ INGESTION_API = env("INGESTION_API_URL")
 
 st.set_page_config(page_title="Ask-the-Docs", page_icon="🤖", layout="wide")
 
-# session initialization
+# ---------- Session State Initialization ----------
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = None  # will be assigned after first response
 if "history" not in st.session_state:
@@ -29,7 +29,7 @@ if "submitted_question" not in st.session_state:
     st.session_state.submitted_question = None
 
 
-# sidebar upload + new chat
+# ---------- Sidebar (Upload + Controls) ----------
 with st.sidebar:
     st.markdown("## 📄 Upload Documents")
 
@@ -38,7 +38,7 @@ with st.sidebar:
         st.session_state.uploaded_file_hashes = set()
 
     def file_hash(buf: bytes) -> str:
-        return hashlib.md5(buf).hexdigest()  # create hash for each file to check duplicates
+        return hashlib.md5(buf).hexdigest()  # fast, collision risk negligible for UX dedupe
 
     with st.form("upload_form", clear_on_submit=False):
         f = st.file_uploader("File (PDF/DOCX)", type=["pdf", "docx"], key="file_uploader")
@@ -84,13 +84,13 @@ with st.sidebar:
         for k in ["last_sent_question", "question_input"]:
             if k in st.session_state:
                 del st.session_state[k]
-        # Keep uploaded_file_hashes to allow reusing files in new chat
+        # Keep uploaded_file_hashes — user may want to avoid reuploading same docs across chats.
 
     st.markdown("---")
     st.caption("Lightweight chat UI. IDs assigned by backend after first send.")
 
 
-# css
+# ---------- Custom CSS for Message Bubbles ----------
 CUSTOM_CSS = """
 <style>
 /* Container scroll area */
@@ -111,7 +111,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 st.title("Ask-the-Docs 🤖")
 st.caption("Ask questions about your uploaded documents.")
 
-# Predefine async feedback sender so its available for button handlers above
+# Predefine async feedback sender so it's available for button handlers above
 async def send_feedback_async(feedback_type: str, message_id: str, reasons=None, comment: str | None = None):
     thread_id_local = st.session_state.get("thread_id")
     if not thread_id_local:
@@ -137,7 +137,7 @@ async def send_feedback_async(feedback_type: str, message_id: str, reasons=None,
     except Exception:
         log.exception("Feedback submit failed")
 
-# render chat history
+# ---------- Render Chat History ----------
 chat_container = st.container()
 with chat_container:
     st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
@@ -188,7 +188,7 @@ with chat_container:
                         st.markdown(f"• {c}")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# user input form
+# ---------- Input Area (Form based to avoid duplicate on rerun) ----------
 st.write("")
 if "input_generation" not in st.session_state:
     # Used to force a brand new widget (empty) after successful responses
@@ -217,6 +217,7 @@ else:
 
 ## send_feedback_async moved up
 
+## Removed JS messaging; using native buttons.
 
 def process_special_command(cmd: str) -> bool:
     return False
@@ -302,7 +303,7 @@ if st.session_state.submitted_question:
     # If there was an error we leave last_input as-is so the user can edit/resend.
     st.rerun()
 
-# feedback form user interaction
+# ---------- Feedback Modal / Drawer ----------
 if st.session_state.active_feedback:
     with st.sidebar:
         ctx = st.session_state.active_feedback

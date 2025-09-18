@@ -26,7 +26,7 @@ docker-compose down
 ### Vector / Retrieval Details
 
 - Query flow (full /process): safety_pre -> intent -> rephrase -> embed (LLM API /embed) -> pgvector similarity search -> answer synthesis -> post_safety -> grounding.
--Simple flow`/rag_simple` performs: embed -> pgvector retrieval -> answer .
+- Minimal endpoint `/rag_simple` performs: embed -> pgvector retrieval -> answer (no safety / grounding) for educational debugging.
 
 ### Embedding Normalization (Cosine Similarity)
 

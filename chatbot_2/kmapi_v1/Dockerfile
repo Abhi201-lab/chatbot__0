@@ -9,11 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirement.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# copy service sources from the build context into the image
 COPY . .
 
 ENV PYTHONUNBUFFERED=1
 ENV VECTOR_DB_PATH="/data/faiss_index_ingest"
 EXPOSE 8001
 
-
+# Expect FAISS index mounted at /data
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]

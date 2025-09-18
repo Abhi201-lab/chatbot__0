@@ -1,7 +1,5 @@
 # Setup Guide
 
-Concise, action‑oriented instructions for running the RAG microservices platform from scratch.
-
 ---
 ## 1. Prerequisites
 | Requirement | Notes |
@@ -58,8 +56,6 @@ PORT=8000
 ```
 API_BASE=http://chat_api_v1:8000
 ```
-
-> Never commit real API keys. Use placeholders when sharing the repo.
 
 ---
 ## 4. Start the Stack
