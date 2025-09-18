@@ -96,4 +96,3 @@ Removed / Legacy (no longer used):
 | Ungrounded answers | Grounding disabled or threshold too low | Ensure `ENFORCE_GROUNDED=1`; tune `GROUNDING_MIN_OVERLAP` |
 
 ---
-This documentation reflects the pgvector-only architecture as of current iteration.
