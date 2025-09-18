@@ -1,19 +1,21 @@
 # Architecture Overview
 
+> Versioned deployment: all microservices suffixed with `_v1`.
 
 ## 1. Service Topology
 
 ```mermaid
 flowchart LR
-    UI[chatui_v1\n(Streamlit)] -->|/chat, /feedback| CHAT[chat_api_v1]
+    UI[chatui_v1 (Streamlit)] -->|/chat| CHAT[chat_api_v1]
+    UI -->|/feedback| CHAT
     UI -->|/upload| INGEST[ingestapi_v1]
 
     CHAT -->|/process| KM[kmapi_v1]
-    KM -->|/inspect, /synthesize, /chat, /embed| LLM[llmapi_v1]
+    KM -->|LLM calls (/inspect,/embed,/synthesize,/chat)| LLM[llmapi_v1]
 
     %% Vector storage now in Postgres (pgvector)
-    INGEST -->|insert chunks| PG[(postgres_v1\n+ pgvector)]
-    KM -->|similarity <=>| PG
+    INGEST -->|insert chunks| PG[(postgres_v1 + pgvector)]
+    KM -->|similarity search| PG
     CHAT -->|SQL| PG
 
     subgraph Persistence
