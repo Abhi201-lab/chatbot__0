@@ -1,49 +1,30 @@
 # Architecture Overview
 
-> Versioned deployment: all microservices suffixed with `_v1`.
 
 ## 1. Service Topology
 
 ```mermaid
-flowchart LR
-    UI[chatui_v1 (Streamlit)] -->|/chat| CHAT[chat_api_v1]
-    UI -->|/feedback| CHAT
-    UI -->|/upload| INGEST[ingestapi_v1]
-
-    CHAT -->|/process| KM[kmapi_v1]
-    KM -->|LLM calls (/inspect,/embed,/synthesize,/chat)| LLM[llmapi_v1]
-
-    %% Vector storage now in Postgres (pgvector)
-    INGEST -->|insert chunks| PG[(postgres_v1 + pgvector)]
-    KM -->|similarity search| PG
-    CHAT -->|SQL| PG
-
-    subgraph Persistence
-        PG
-    end
+graph LR
+    UI[chatui_v1] --> CHAT[chat_api_v1]
+    UI --> INGEST[ingestapi_v1]
+    CHAT --> KM[kmapi_v1]
+    KM --> LLM[llmapi_v1]
+    INGEST --> PG[(postgres_v1 + pgvector)]
+    KM --> PG
+    CHAT --> PG
 ```
 
 ## 2. Deployment (Docker Compose)
 
 ```mermaid
-flowchart TB
-    subgraph Host
-        subgraph Bridge_Network
-            chatui[chatui_v1\n8502→8501]
-            chat_api[chat_api_v1\n8080→8000]
-            ingest[ingestapi_v1\n8083→8003]
-            km[kmapi_v1\n8081→8001]
-            llm[llmapi_v1\n8082→8002]
-            pg[postgres_v1\n5543→5432\npgvector]
-        end
-        chatui ==> chat_api
-        chatui ==> ingest
-        chat_api ==> km
-        km ==> llm
-        ingest --> pg
-        km --> pg
-        chat_api --> pg
-    end
+graph TB
+    chatui[chatui_v1 8502->8501] --> chat_api[chat_api_v1 8080->8000]
+    chatui --> ingest[ingestapi_v1 8083->8003]
+    chat_api --> km[kmapi_v1 8081->8001]
+    km --> llm[llmapi_v1 8082->8002]
+    ingest --> pg[(postgres_v1 5543->5432 pgvector)]
+    km --> pg
+    chat_api --> pg
 ```
 
 ## 3. Domain Model (ER)
@@ -120,15 +101,13 @@ sequenceDiagram
     participant UI as chatui_v1
     participant ING as ingestapi_v1
     participant PG as Postgres
-    participant PG as Postgres (pgvector)
 
-    UI->>ING: POST /upload (multipart)
-    ING->>PG: Insert Document pending
-    ING->>ING: Extract (PDF/DOCX loader)
-    ING->>ING: Chunk (Recursive splitter)
-    ING->>PG: Embed + insert vector_chunks
-    ING->>PG: Update status=ingested
-    ING-->>UI: success payload
+    UI->>ING: POST /upload
+    ING->>PG: Insert pending doc
+    ING->>ING: Extract & chunk
+    ING->>PG: Insert vector chunks
+    ING->>PG: Update status
+    ING-->>UI: success
 ```
 
 ### 4.3 Feedback
