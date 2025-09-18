@@ -4,22 +4,20 @@
 ## 1. Service Topology
 
 ```mermaid
-graph LR
-    UI[chatui_v1 (Streamlit)] -->|/chat /feedback| CHAT[chat_api_v1]
+flowchart LR
+    UI[chatui_v1\n(Streamlit)] -->|/chat, /feedback| CHAT[chat_api_v1]
     UI -->|/upload| INGEST[ingestapi_v1]
 
     CHAT -->|/process| KM[kmapi_v1]
-    KM -->|/inspect /synthesize /chat /embed| LLM[llmapi_v1]
+    KM -->|/inspect, /synthesize, /chat, /embed| LLM[llmapi_v1]
 
-    INGEST -->|write chunks| FAISS[(FAISS Index Volume)]
-    KM -->|read vectors| FAISS
-
-    CHAT -->|SQL| PG[(postgres_v1)]
-    INGEST -->|SQL| PG
+    %% Vector storage now in Postgres (pgvector)
+    INGEST -->|insert chunks| PG[(postgres_v1\n+ pgvector)]
+    KM -->|similarity <=>| PG
+    CHAT -->|SQL| PG
 
     subgraph Persistence
         PG
-        FAISS
     end
 ```
 
@@ -28,23 +26,21 @@ graph LR
 ```mermaid
 flowchart TB
     subgraph Host
-        subgraph Network (bridge)
-            chatui[chatui_v1\n8502->8501]
-            chat_api[chat_api_v1\n8080->8000]
-            ingest[ingestapi_v1\n8083->8003]
-            km[kmapi_v1\n8081->8001]
-            llm[llmapi_v1\n8082->8002]
-            pg[postgres_v1\n5543->5432]
-            faiss[(FAISS Index)]
+        subgraph Bridge_Network
+            chatui[chatui_v1\n8502→8501]
+            chat_api[chat_api_v1\n8080→8000]
+            ingest[ingestapi_v1\n8083→8003]
+            km[kmapi_v1\n8081→8001]
+            llm[llmapi_v1\n8082→8002]
+            pg[postgres_v1\n5543→5432\npgvector]
         end
         chatui ==> chat_api
         chatui ==> ingest
         chat_api ==> km
         km ==> llm
-        ingest --> faiss
-        km --> faiss
-        chat_api --> pg
         ingest --> pg
+        km --> pg
+        chat_api --> pg
     end
 ```
 
@@ -93,8 +89,7 @@ sequenceDiagram
     participant CHAT as chat_api_v1
     participant KM as kmapi_v1
     participant LLM as llmapi_v1
-    participant FAISS as FAISS Index
-    participant PG as Postgres
+    participant PG as Postgres (pgvector)
 
     UI->>CHAT: POST /chat {user_input, thread_id?}
     CHAT->>PG: Insert conversation stub
@@ -106,8 +101,8 @@ sequenceDiagram
         CHAT-->>UI: Response
     else Safe
         KM->>LLM: /synthesize (rephrase)
-        KM->>FAISS: similarity_search
-        FAISS-->>KM: top-k docs
+        KM->>PG: SELECT ... ORDER BY embedding <=> $query_vec LIMIT k
+        PG-->>KM: top-k chunks
         KM->>LLM: /chat (context prompt)
         KM->>LLM: /inspect (post)
         KM-->>CHAT: answer + citations
@@ -123,13 +118,13 @@ sequenceDiagram
     participant UI as chatui_v1
     participant ING as ingestapi_v1
     participant PG as Postgres
-    participant V as FAISS (disk)
+    participant PG as Postgres (pgvector)
 
     UI->>ING: POST /upload (multipart)
     ING->>PG: Insert Document pending
     ING->>ING: Extract (PDF/DOCX loader)
     ING->>ING: Chunk (Recursive splitter)
-    ING->>V: Embed + add_chunks
+    ING->>PG: Embed + insert vector_chunks
     ING->>PG: Update status=ingested
     ING-->>UI: success payload
 ```
@@ -157,14 +152,14 @@ sequenceDiagram
 | llmapi_v1 | Abstraction over OpenAI (embeddings + chat + simple moderation) | /inspect, /embed, /synthesize, /chat |
 | chat_api_v1 | Conversation persistence, feedback handling, delegating answer generation | /chat, /feedback |
 | postgres_v1 | Relational persistence | n/a |
-| FAISS Index | Vector similarity store | n/a |
+| Postgres pgvector | Vector similarity store (embedding + metadata) | n/a |
 
 ## 6. Configuration & Environment
 
 Common env variables:
 - `OPENAI_API_KEY`
 - `DATABASE_URL`
-- `VECTOR_DB_PATH`
+<!-- Removed legacy FAISS path var -->
 - `KM_API_URL`, `LLM_API_URL`, `CHATBOT_API_URL`, `INGESTION_API_URL`
 
 `environment.env()` helper enforces required vars and supports defaults.
@@ -173,7 +168,7 @@ Common env variables:
 - Network calls wrapped in try/except with specific `requests` exceptions (timeout, connection, HTTP error).
 - Fallback messages returned to user instead of propagating stack traces.
 - Safety checks before and after generation (keyword-based now; easily replaceable).
-- FAISS loading lazy; degraded mode if loading fails (returns user-friendly message).
+- Vector retrieval via pgvector `<=>` cosine distance (no external index service).
 
 ## 8. Performance Notes
 - Retrieval step logs timings (embedding, similarity, total) for profiling.
@@ -199,7 +194,7 @@ Common env variables:
 |-------|------|---------|
 | 1 | Better stability | Add reload on ingestion completion; structured logs; request IDs |
 | 2 | Horizontal scale | Separate vector store service; replicate APIs with load balancer |
-| 3 | Multi-tenant | Namespace thread_id; per-tenant FAISS shards or filtered metadata |
+| 3 | Multi-tenant | Namespace thread_id; per-tenant schema / row‑level filters |
 | 4 | Advanced RAG | Reranking layer, hybrid BM25+vector search, conversation memory inclusion |
 
 ## 12. Known Limitations
@@ -214,7 +209,7 @@ Common env variables:
 3. Implement conversation window (last N user/bot turns) to improve context.
 4. Replace keyword safety with OpenAI Moderation or Guardrails style policy.
 5. Add `/metrics` endpoints (Prometheus) for each API.
-6. Centralize embedding calls in llmapi_v1 instead of direct OpenAI usage in FAISSWriter.
+6. Centralize embedding calls in llmapi_v1 for ingestion (already centralized for KM queries).
 7. Add retention / deletion endpoint for user documents & associated vectors.
 8. Provide bulk export (JSON) for conversation + feedback analytics.
 
@@ -235,8 +230,8 @@ Common env variables:
 
 ## 16. Sequence Summary (Condensed ASCII)
 ```
-User -> chatui_v1 -> chat_api_v1 -> kmapi_v1 -> (llmapi_v1 + FAISS) -> chat_api_v1 -> chatui_v1
-User -> chatui_v1 -> ingestapi_v1 -> (FAISS + Postgres)
+User -> chatui_v1 -> chat_api_v1 -> kmapi_v1 -> (llmapi_v1 + Postgres pgvector) -> chat_api_v1 -> chatui_v1
+User -> chatui_v1 -> ingestapi_v1 -> (Postgres pgvector)
 ```
 
 ## 17. Glossary
