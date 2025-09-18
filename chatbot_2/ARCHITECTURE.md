@@ -1,6 +1,5 @@
 # Architecture Overview
 
-> Versioned deployment: all microservices suffixed with `_v1`.
 
 ## 1. Service Topology
 
@@ -310,4 +309,3 @@ Feel free to request a lighter executive summary or deeper drill-down (e.g., jus
 | Silent template drift | Inconsistent experiments | Add checksum logging & config-driven template selection |
 
 ---
-End of prompt architecture section.
