@@ -13,7 +13,7 @@
 ---
 ## 2. Clone Repository
 ```powershell
-git clone <your-fork-or-repo-url>
+git clone https://github.com/Abhi201-lab/chatbot__0.git
 cd chatbot_2
 ```
 
